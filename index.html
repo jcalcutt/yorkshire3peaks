@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <title>2025 Yorkshire 3 Peaks Results</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/choices.js/public/assets/styles/choices.min.css" />
+    <link rel="icon" href="favicon.ico" />
+    <script src="https://cdn.jsdelivr.net/npm/choices.js/public/assets/scripts/choices.min.js"></script>
+    <style>
+        body {
+            font-family: monospace;
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        .line {
+            fill: none;
+            stroke: lightgrey;
+            stroke-width: 1px;
+            stroke-opacity: 50%;
+        }
+
+        .line.highlighted {
+            stroke: black;
+            stroke-width: 3px;
+        }
+
+        .line.dimmed {
+            opacity: 0.5;
+        }
+
+        #tooltip {
+            position: absolute;
+            background: white;
+            padding: 8px;
+            border: 1px solid #ccc;
+            font-size: 14px;
+            pointer-events: none;
+            opacity: 0;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        #controls {
+            /* position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            background: transparent; */
+            display: flex;
+            justify-content: space-between;
+            align-items: start;
+            padding: 10px 20px;
+            box-sizing: border-box;
+        }
+
+        button {
+            font-family: monospace;
+            padding: 4px 8px;
+        }
+
+
+        .choices {
+            width: 300px;
+            overflow: visible;
+        }
+
+        .choices__inner {
+            min-height: auto;
+        }
+
+        svg {
+            display: block;
+        }
+
+        .tick {
+            font-family: monospace;
+            font-size: 12px;
+            text-transform: capitalize;
+        }
+    </style>
+</head>
+
+<body>
+
+    <header style="padding: 20px; font-family: monospace;">
+        <h1 style="margin-bottom: 10px;">2025 Yorkshire 3 Peaks Race Results</h1>
+        <p style="margin-top: 0;">
+            An (unoffical) visual representation of the 2025 Yorkshire 3 Peaks race, using the <a
+                href="https://www.sportident.co.uk/results/ThreePeaksFellRace/2025/ThreePeaksFellRace/"
+                target="_blank">official public results data.</a>
+        </p>
+        <p>There are 5 checkpoints along <a href="https://www.threepeaksrace.org/course" target="_blank">the ~39km race
+                route</a>:
+        <ul>
+            <li>
+                Pen-y-ghent summit @ ~5.9km & 693m
+            </li>
+            <li>
+                Ribblehead valley @ ~18.1km & 299m (inc. time cut-off)
+            </li>
+            <li>
+                Whernside summit @ ~22.1km & 723m
+            </li>
+            <li>
+                Hill Inn @ ~26.3km & 290m (inc. time cut-off)
+            </li>
+            <li>
+                Ingleborough summit @ ~30.3km & 722m
+            </li>
+        </ul>
+    </header>
+    <div id="controls">
+        <div style="display: flex; gap: 30px; align-items: start;">
+          <select id="search" multiple></select>
+          <button id="toggle">Switch to Time View</button>
+        </div>
+      </div>
+
+    <svg width="1400" height="600"></svg>
+    <div id="tooltip"></div>
+
+    <script>
+        const svg = d3.select("svg"),
+            margin = { top: 50, right: 100, bottom: 50, left: 70 },
+            width = +svg.attr("width") - margin.left - margin.right,
+            height = +svg.attr("height") - margin.top - margin.bottom,
+            g = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+
+        const tooltip = d3.select("#tooltip");
+        let currentMode = 'position';
+        let selectedParticipants = [];
+
+        const parseTime = (timeStr) => {
+            if (!timeStr || typeof timeStr !== "string") return null;
+            const parts = timeStr.split(":").map(Number);
+            if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+            if (parts.length === 2) return parts[0] * 60 + parts[1];
+            return null;
+        };
+
+        const formatMinutes = (seconds) => {
+            if (seconds == null || isNaN(seconds)) return "";
+            const minutes = Math.floor(seconds / 60);
+            const hrs = Math.floor(minutes / 60);
+            const mins = minutes % 60;
+            return `${hrs > 0 ? hrs + "h " : ""}${mins}m`;
+        };
+
+        d3.csv("2025_3peaks_results_data.csv").then(data => {
+            const participants = data.map(row => {
+                const name = row.name;
+                const values = [];
+                for (const key in row) {
+                    if (key !== "name") {
+                        const parts = key.split("-");
+                        const [checkpoint, type] = parts.length > 1 ? parts : [null, null];
+                        if (checkpoint && type) {
+                            let entry = values.find(v => v.checkpoint === checkpoint);
+                            if (!entry) {
+                                entry = { checkpoint };
+                                values.push(entry);
+                            }
+                            if (type === 'time') {
+                                entry.time = row[key] || null;
+                            } else if (type === 'position') {
+                                const val = row[key];
+                                entry.position = val === "" || isNaN(+val) ? null : +val;
+                            }
+                        }
+                    }
+                }
+                return { name, values };
+            });
+
+            const checkpoints = [...new Set(participants.flatMap(p => p.values.map(v => v.checkpoint)))];
+            const x = d3.scalePoint().domain(checkpoints).range([0, width]);
+
+            const drawChart = () => {
+                g.selectAll("*").remove();
+
+                const y = d3.scaleLinear()
+                    .domain([
+                        d3.min(participants, p => d3.min(p.values, v => {
+                            const val = currentMode === 'position' ? v.position : parseTime(v.time);
+                            return val == null ? Infinity : (currentMode === 'time' ? val / 60 : val);
+                        })),
+                        d3.max(participants, p => d3.max(p.values, v => {
+                            const val = currentMode === 'position' ? v.position : parseTime(v.time);
+                            return val == null ? -Infinity : (currentMode === 'time' ? val / 60 : val);
+                        }))
+                    ])
+                    .nice()
+                    .range([1, height]);
+
+                const line = d3.line()
+                    .defined(d => {
+                        const val = currentMode === 'position' ? d.position : parseTime(d.time);
+                        return val != null && !isNaN(val);
+                    })
+                    .x(d => x(d.checkpoint))
+                    .y(d => {
+                        const val = currentMode === 'position' ? d.position : parseTime(d.time);
+                        return y(currentMode === 'time' ? val / 60 : val);
+                    });
+
+                g.append("g")
+                    .call(d3.axisTop(x));
+
+                const yAxis = g.append("g");
+                if (currentMode === 'time') {
+                    const ticks = d3.range(
+                        Math.ceil(y.domain()[0] / 30) * 30,
+                        y.domain()[1] + 30,
+                        30
+                    );
+                    yAxis.call(
+                        d3.axisLeft(y)
+                            .tickValues(ticks)
+                            .tickFormat(d => formatMinutes(d * 60))
+                    );
+                } else {
+                    const ticks = [1, 100, 200, 300, 400, 500, 600, 700, 800];
+                    yAxis.call(
+                        d3.axisLeft(y)
+                            .tickValues(ticks)
+                    );
+                }
+
+                g.append("text")
+                    .attr("x", width / 2)
+                    .attr("y", -24)
+                    .attr("text-anchor", "middle")
+                    .style("font-size", "16px")
+                    .style("font-family", "monospace")
+                    .text("Checkpoint");
+
+                g.append("text")
+                    .attr("transform", "rotate(-90)")
+                    .attr("x", -height / 2)
+                    .attr("y", -55)
+                    .attr("text-anchor", "middle")
+                    .style("font-family", "monospace")
+                    .style("font-size", "16px")
+                    .text(currentMode === "position" ? "Position" : "Time");
+
+                const lines = g.selectAll(".line")
+                    .data(participants)
+                    .enter()
+                    .append("path")
+                    .attr("class", "line")
+                    .attr("d", d => line(d.values));
+
+                lines
+                    .classed("dimmed", d => selectedParticipants.length > 0 && !selectedParticipants.includes(d.name))
+                    .classed("highlighted", d => selectedParticipants.includes(d.name))
+                    .on("mousemove", function (event, d) {
+                        d3.select(this).raise().classed("highlighted", true);
+                        showTooltip(d, event.pageX, event.pageY);
+                    })
+                    .on("mouseleave", function () {
+                        if (!selectedParticipants.includes(d3.select(this).datum().name)) {
+                            d3.select(this).classed("highlighted", false);
+                        }
+                        tooltip.style("opacity", 0);
+                    });
+
+                selectedParticipants.forEach(name => {
+                    const p = participants.find(d => d.name === name);
+                    if (!p) return;
+                    const last = p.values.slice().reverse().find(v =>
+                        (currentMode === 'position' && v.position != null) ||
+                        (currentMode === 'time' && v.time)
+                    );
+                    if (last) {
+                        const xVal = x(last.checkpoint);
+                        const yVal = currentMode === 'position' ? last.position : parseTime(last.time) / 60;
+                        const yPos = y(yVal);
+
+                        // Find SVG canvas and calculate absolute position of the data point
+                        const svgNode = svg.node();
+                        const pt = svgNode.createSVGPoint();
+                        pt.x = xVal + margin.left;
+                        pt.y = yPos + margin.top;
+                        const screenCoords = pt.matrixTransform(svgNode.getScreenCTM());
+
+                        showTooltip(p, screenCoords.x + 10, screenCoords.y);
+                    }
+                });
+            };
+
+            const showTooltip = (participant, xPos, yPos) => {
+                let html = `<strong>${participant.name}</strong><br>`;
+                participant.values.forEach(v => {
+                    const value = currentMode === 'position' ? v.position : v.time;
+                    if (value != null) {
+                        html += `${v.checkpoint}: ${currentMode === 'position' ? value : formatMinutes(parseTime(value))}<br>`;
+                    }
+                });
+                tooltip
+                    .style("left", `${xPos + 10}px`)
+                    .style("top", `${yPos}px`)
+                    .style("opacity", 1)
+                    .html(html);
+            };
+
+            const names = participants.map(d => d.name).sort();
+            const choices = new Choices("#search", {
+                removeItemButton: true,
+                shouldSort: false,
+                placeholder: true,
+                placeholderValue: "Choose a runner"
+            });
+
+            choices.setChoices(names.map(name => ({ value: name, label: name })), 'value', 'label', true);
+
+            document.querySelector("#search").addEventListener("change", function () {
+                selectedParticipants = Array.from(this.selectedOptions, o => o.value);
+                drawChart();
+            });
+
+            d3.select("#toggle").on("click", () => {
+                currentMode = currentMode === 'position' ? 'time' : 'position';
+                d3.select("#toggle").text(`Switch to ${currentMode === 'position' ? 'Time' : 'Position'} View`);
+                drawChart();
+            });
+
+            drawChart();
+        });
+    </script>
+</body>
+
+</html>
