@@ -6,7 +6,7 @@
     <title>2025 Yorkshire 3 Peaks Results</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/choices.js/public/assets/styles/choices.min.css" />
-    <link rel="icon" href="favicon.ico" />
+    <link rel="icon" href="public/favicon.ico" />
     <script src="https://cdn.jsdelivr.net/npm/choices.js/public/assets/scripts/choices.min.js"></script>
     <style>
         body {
@@ -150,7 +150,7 @@
             return `${hrs > 0 ? hrs + "h " : ""}${mins}m`;
         };
 
-        d3.csv("2025_3peaks_results_data.csv").then(data => {
+        d3.csv("public/2025_3peaks_results_data.csv").then(data => {
             const participants = data.map(row => {
                 const name = row.name;
                 const values = [];
