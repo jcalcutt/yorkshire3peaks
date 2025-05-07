@@ -218,7 +218,7 @@
 
             const drawChart = (elevationData) => {
                 g.selectAll("*").remove();
-                
+
                 // Set up scales for elevation profile
                 const xElevation = d3.scaleLinear()
                     .domain(d3.extent(elevationData, d => d.distance))
@@ -388,6 +388,10 @@
                 selectedParticipants.forEach(name => {
                     const p = participants.find(d => d.name === name);
                     if (!p) return;
+                    // Raise the selected runner's path to top
+                    g.selectAll(".line")
+                        .filter(d => d.name === name)
+                        .raise();
                     const last = p.values.slice().reverse().find(v =>
                         (currentMode === 'position' && v.position != null) ||
                         (currentMode === 'time' && v.time)
