@@ -113,32 +113,33 @@
                 Pen-y-ghent summit (693m) @ ~5.9km
             </li>
             <li>
-                Ribblehead valley (299m) @ ~18.1km [time cut-off @ 2h 20m]
+                Ribblehead valley (299m) @ ~19.2km [time cut-off @ 2h 20m]
             </li>
             <li>
-                Whernside summit (723m) @ ~22.1km
+                Whernside summit (723m) @ ~23.2km
             </li>
             <li>
-                Hill Inn (290m) @ ~26.3km [time cut-off @ 3h 40m]
+                Hill Inn (290m) @ ~27.4km [time cut-off @ 3h 40m]
             </li>
             <li>
-                Ingleborough summit (722m) @ ~30.3km
+                Ingleborough summit (722m) @ ~31.5km
             </li>
         </ul>
     </header>
     <div id="controls">
         <div style="display: flex; gap: 30px; align-items: start;">
-          <select id="search" multiple></select>
-          <button id="toggle">Switch to Time View</button>
+            <select id="search" multiple></select>
+            <button id="toggle">Switch to Time View</button>
         </div>
-      </div>
+    </div>
 
     <svg width="1400" height="600"></svg>
     <div id="tooltip"></div>
 
     <script>
+
         const svg = d3.select("svg"),
-            margin = { top: 50, right: 100, bottom: 50, left: 70 },
+            margin = { top: 90, right: 100, bottom: 50, left: 70 },
             width = +svg.attr("width") - margin.left - margin.right,
             height = +svg.attr("height") - margin.top - margin.bottom,
             g = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
@@ -189,11 +190,57 @@
                 return { name, values };
             });
 
-            const checkpoints = [...new Set(participants.flatMap(p => p.values.map(v => v.checkpoint)))];
-            const x = d3.scalePoint().domain(checkpoints).range([0, width]);
+            let elevationData = [];
 
-            const drawChart = () => {
+            d3.csv("public/elevation_profile.csv", d => ({
+                distance: +d.distance,
+                elevation: +d.elevation
+            })).then(data => {
+                elevationData = data;
+                // Call this after data is loaded to ensure elevation profile is ready
+                if (!!elevationData && !!elevationData.length) drawChart(elevationData);
+            });
+
+            const checkpoints = [...new Set(participants.flatMap(p => p.values.map(v => v.checkpoint)))];
+            const checkpointDistances = {
+                "start": 0,
+                "pen y ghent": 5.9,
+                "ribblehead": 19.2,
+                "whernside": 23.2,
+                "hill inn": 27.4,
+                "ingleborough": 31.5,
+                "finish": 39
+            };
+
+            const x = d3.scaleLinear()
+                .domain([0, 39]) // Total race distance
+                .range([0, width]);
+
+            const drawChart = (elevationData) => {
                 g.selectAll("*").remove();
+                
+                // Set up scales for elevation profile
+                const xElevation = d3.scaleLinear()
+                    .domain(d3.extent(elevationData, d => d.distance))
+                    .range([0, width]);
+
+                const yElevation = d3.scaleLinear()
+                    .domain(d3.extent(elevationData, d => d.elevation))
+                    .range([40, 0]); // draw at top edge of chart
+
+                const elevationLine = d3.line()
+                    .x(d => xElevation(d.distance))
+                    .y(d => yElevation(d.elevation))
+                    .curve(d3.curveMonotoneX); // for smoothness
+
+                // Draw elevation profile
+                g.append("path")
+                    .datum(elevationData)
+                    .attr("fill", "none")
+                    .attr("stroke", "black")
+                    .attr("stroke-width", 1)
+                    .attr("transform", `translate(0, -40)`)  // shift it to chart origin
+                    .attr("d", elevationLine);
 
                 const y = d3.scaleLinear()
                     .domain([
@@ -214,14 +261,63 @@
                         const val = currentMode === 'position' ? d.position : parseTime(d.time);
                         return val != null && !isNaN(val);
                     })
-                    .x(d => x(d.checkpoint))
+                    .x(d => x(checkpointDistances[d.checkpoint]))
                     .y(d => {
                         const val = currentMode === 'position' ? d.position : parseTime(d.time);
                         return y(currentMode === 'time' ? val / 60 : val);
                     });
 
-                g.append("g")
-                    .call(d3.axisTop(x));
+                // Custom curved x-axis with tick labels based on elevation
+                const tickDistances = Object.values(checkpointDistances);
+                const tickLabels = Object.keys(checkpointDistances);
+
+                // Create a lookup to map distance to elevation
+                const elevationLookup = new Map(elevationData.map(d => [d.distance, d.elevation]));
+
+                // Interpolate elevation for tick distances
+                function interpolateElevation(dist, ed) {
+                    if (ed.length) {
+                        const i = d3.bisector(d => d.distance).left(ed, dist);
+                        if (i === 0) {
+                            return ed[0].elevation
+                        };
+                        if (i >= ed.length) return ed[ed.length - 1].elevation;
+
+                        const d0 = ed[i - 1];
+                        const d1 = ed[i];
+                        const t = (dist - d0.distance) / (d1.distance - d0.distance);
+                        return d0.elevation + t * (d1.elevation - d0.elevation);
+                    } else {
+                        return 0;
+                    }
+                }
+
+                const elevationOffset = -40; // keep this consistent
+
+                // Plot ticks along the elevation path
+                tickDistances.forEach((dist, i) => {
+                    const xPos = xElevation(dist);
+                    const yPos = yElevation(interpolateElevation(dist, elevationData));
+
+                    // Tick line
+                    g.append("line")
+                        .attr("transform", `translate(0, ${elevationOffset})`)
+                        .attr("x1", xPos)
+                        .attr("y1", yPos)
+                        .attr("x2", xPos)
+                        .attr("y2", yPos - 6)
+                        .attr("stroke", "black");
+
+                    // Tick label
+                    g.append("text")
+                        .attr("transform", `translate(0, ${elevationOffset})`)
+                        .attr("x", xPos)
+                        .attr("y", yPos - 10)
+                        .attr("text-anchor", "middle")
+                        .attr("font-size", 12)
+                        .attr("font-family", "monospace")
+                        .text(tickLabels[i]);
+                });
 
                 const yAxis = g.append("g");
                 if (currentMode === 'time') {
@@ -244,8 +340,8 @@
                 }
 
                 g.append("text")
-                    .attr("x", width / 2)
-                    .attr("y", -24)
+                    .attr("x", (width / 2) - 20)
+                    .attr("y", -60)
                     .attr("text-anchor", "middle")
                     .style("font-size", "16px")
                     .style("font-family", "monospace")
@@ -265,7 +361,15 @@
                     .enter()
                     .append("path")
                     .attr("class", "line")
-                    .attr("d", d => line(d.values));
+                    .attr("d", d => {
+                        const startCheckpoint = {
+                            checkpoint: "start",
+                            position: null,
+                            time: currentMode === 'time' ? "00:00" : null
+                        };
+                        const extendedValues = [startCheckpoint, ...d.values];
+                        return line(extendedValues);
+                    });
 
                 lines
                     .classed("dimmed", d => selectedParticipants.length > 0 && !selectedParticipants.includes(d.name))
@@ -289,7 +393,7 @@
                         (currentMode === 'time' && v.time)
                     );
                     if (last) {
-                        const xVal = x(last.checkpoint);
+                        const xVal = x(checkpointDistances[last.checkpoint]);
                         const yVal = currentMode === 'position' ? last.position : parseTime(last.time) / 60;
                         const yPos = y(yVal);
 
@@ -299,7 +403,6 @@
                         pt.x = xVal + margin.left;
                         pt.y = yPos + margin.top;
                         const screenCoords = pt.matrixTransform(svgNode.getScreenCTM());
-
                         showTooltip(p, screenCoords.x + 10, screenCoords.y);
                     }
                 });
@@ -332,16 +435,16 @@
 
             document.querySelector("#search").addEventListener("change", function () {
                 selectedParticipants = Array.from(this.selectedOptions, o => o.value);
-                drawChart();
+                if (!!elevationData && !!elevationData.length) drawChart(elevationData);
             });
 
             d3.select("#toggle").on("click", () => {
                 currentMode = currentMode === 'position' ? 'time' : 'position';
                 d3.select("#toggle").text(`Switch to ${currentMode === 'position' ? 'Time' : 'Position'} View`);
-                drawChart();
+                if (!!elevationData && !!elevationData.length) drawChart(elevationData);
             });
 
-            drawChart();
+            if (!!elevationData && !!elevationData.length) drawChart(elevationData);
         });
     </script>
 
